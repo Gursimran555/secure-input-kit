@@ -1,0 +1,14 @@
+[project]
+name = "secure-input-kit"
+version = "1.0.0"
+description = "Input validation, parameterised SQL, XSS-safe rendering and unpredictable tokens, each shown next to the attack it stops"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [{ name = "Gursimran Singh" }]
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
