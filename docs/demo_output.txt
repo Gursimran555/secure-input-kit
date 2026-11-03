@@ -1,0 +1,119 @@
+
+========================================================================
+WHAT THE FIRST VERSION GOT WRONG
+========================================================================
+
+Email validator: v1 (substring blacklist + regex) vs v2 (regex only)
+  'dr.smith@clinic.com'                      v1 ACCEPT  v2 ACCEPT
+  'prescriptions@pharmacy.ca'                v1 reject  v2 ACCEPT
+  'transcription@clinic.com'                 v1 reject  v2 ACCEPT
+  "o'brien@clinic.ca"                        v1 reject  v2 ACCEPT
+  '<script>alert(1)</script>@evil.com'       v1 reject  v2 reject
+  'user@evil.com;drop'                       v1 reject  v2 reject
+  'patient@localhost'                        v1 reject  v2 reject
+  'user@192.168.0.1'                         v1 reject  v2 reject
+
+Comment sanitizer v1: what it stored
+  in : Dose was one = 5 ml twice a day
+  out: Dose was  5 ml twice a day
+  in : My son is learning javascript: it's all he talks about
+  out: My son is learning  it's all he talks about
+  in : <a href="jav&#x61;script:alert(document.cookie)">see my results</a>
+  out: <a href="jav&#x61;script:alert(document.cookie)">see my results</a>
+  in : <script>alert('Hacked')</script>
+  out: 
+
+  Line 3 still contains a working javascript: link. Lines 1-2 lost words.
+  v2 stores the text as written and encodes it when rendering:
+  <div class='comment'><b>patient</b>: &lt;a href=&quot;jav&amp;#x61;script:alert(document.cookie)&quot;&gt;see my results&lt;/a&gt;</div>
+  flagged for review: javascript: url
+
+========================================================================
+FILENAMES AND PATHS
+========================================================================
+  ACCEPT  'lab_results.pdf'        
+  REJECT  '../../etc/passwd'       path traversal characters are not allowed
+  REJECT  '.env'                   hidden files are not allowed
+  REJECT  'report.pdf.'            filename cannot end with a dot
+  REJECT  'invoice;rm -rf.txt'     only letters, digits, underscore and dot are allowed
+  REJECT  'file\x00.exe'           filename contains a null byte
+  REJECT  'CON.txt'                reserved device name
+
+  base directory: <tmp>/safe_files
+  ACCEPT  'reports/visit.txt'            
+  ACCEPT  'reports/../lab.txt'           
+  REJECT  '../safe_files_backup/x.txt'   path escapes the base directory
+  REJECT  '../../../../etc/passwd'       path escapes the base directory
+  REJECT  '..\\..\\secret.txt'           path escapes the base directory
+  REJECT  '/etc/passwd'                  absolute paths are not allowed
+  REJECT  'C:\\Windows\\win.ini'         absolute paths are not allowed
+  REJECT  'reports/.env'                 bad path component '.env': hidden files are not allowed
+  REJECT  'lab.txt\x00.jpg'              path contains a null byte
+
+========================================================================
+SQL INJECTION
+========================================================================
+
+  tautology
+    query      : SELECT id, username, role FROM users WHERE username = '' OR '1'='1'
+    vulnerable : [(1, 'admin', 'admin'), (2, 'dr_smith', 'doctor'), (3, 'nurse_lee', 'nurse')]
+    parameterised: []
+
+  login bypass
+    query      : SELECT id, username, role FROM users WHERE username = 'admin' --' AND password_hash = 'anything'
+    vulnerable : (1, 'admin', 'admin')
+    parameterised: None
+
+  UNION
+    query      : SELECT name, diagnosis FROM patients WHERE doctor = 'x' UNION SELECT username, password_hash FROM users --'
+    vulnerable : [('admin', '3565295e1f125994...'), ('dr_smith', '35399d5bc71c3e0b...'), ('nurse_lee', 'fcc9cfa9baec65eb...')]
+    parameterised: []
+
+  o'brien stored and read back with parameters: o'brien@clinic.ca
+  dr_smith with the right password: (2, 'dr_smith', 'doctor')
+
+========================================================================
+XSS
+========================================================================
+  unsafe: <div class='comment'><b>Maria</b>: The nurse was very helpful</div>
+  safe  : <div class='comment'><b>Maria</b>: The nurse was very helpful</div>
+  unsafe: <div class='comment'><b>attacker</b>: <img src=x onerror="alert('XSS')"></div>
+  safe  : <div class='comment'><b>attacker</b>: &lt;img src=x onerror=&quot;alert(&#x27;XSS&#x27;)&quot;&gt;</div>
+  unsafe: <div class='comment'><b><b>fake_admin</b></b>: markup in the author name</div>
+  safe  : <div class='comment'><b>&lt;b&gt;fake_admin&lt;/b&gt;</b>: markup in the author name</div>
+  unsafe: <div class='comment'><b>John</b>: Wait time was < 10 min & parking was easy</div>
+  safe  : <div class='comment'><b>John</b>: Wait time was &lt; 10 min &amp; parking was easy</div>
+
+  Escaping doesn't help inside href:
+    html.escape('javascript:alert(1)') = 'javascript:alert(1)'
+    'https://example.org/results'                -> <a href="https://example.org/results" rel="nofollow noopener">link</a>
+    'javascript:alert(1)'                        -> link
+    'java\tscript:alert(1)'                      -> link
+    'jav&#x61;script:alert(1)'                   -> link
+    'data:text/html,<script>alert(1)</script>'   -> link
+
+========================================================================
+FORMAT STRINGS
+========================================================================
+
+  C printf through ctypes, input 'Patient %x %x %x %x':
+  unsafe  printf(user_input)       -> Patient ffffffff 53a95310 16ded62 0
+  safe    printf("%s", user_input) -> Patient %x %x %x %x
+
+  Python template from the user: {n.__init__.__globals__[CONFIG].db_password}
+    unsafe: example-db-password
+    safe  : Hello Maria Gomez, your message: {n.__init__.__globals__[CONFIG].db_password}
+
+========================================================================
+TOKENS
+========================================================================
+  1000 values in 1-100 (chi-square below ~123.2 = consistent with uniform)
+    random.randint    chi-square   69.4  entropy 6.591 bits
+    secrets.randbelow chi-square   81.2  entropy 6.586 bits
+  Both pass. Statistics can't tell a predictable generator from a secure one.
+
+  Observed 156 tokens made with random.getrandbits(128), cloned the generator:
+    predicted next: f6363c5b0bb3698b0bc65c87a7057afa
+    actual next   : f6363c5b0bb3698b0bc65c87a7057afa
+    10/10 next tokens predicted exactly
+  Same attack on secrets.token_hex(16): 0/10
